@@ -26,6 +26,10 @@ spec:
     route: {}
     scheduler: {}
   template:
+    volumes:
+      - name: kserve-provision-location
+        persistentVolumeClaim:
+          claimName: bielik-model-cache
     containers:
       - name: main
         args:
