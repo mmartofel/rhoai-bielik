@@ -55,8 +55,8 @@ spec:
               name: huggingface-token
         resources:
           requests:
-            cpu: "4"
-            memory: "16Gi"
+            cpu: "1"
+            memory: "12Gi"
             nvidia.com/gpu: "1"
           limits:
             cpu: "8"
