@@ -7,13 +7,12 @@ metadata:
     opendatahub.io/dashboard: "true"
     opendatahub.io/genai-asset: "true"
   annotations:
-    # Hardware profile zarządza GPU scheduling, nodeSelector i tolerations
     opendatahub.io/hardware-profile-name: gpu-profile
     opendatahub.io/hardware-profile-namespace: redhat-ods-applications
     opendatahub.io/model-type: generative
     security.opendatahub.io/enable-auth: "false"
-    openshift.io/display-name: "Bielik-11B-v2.3-Instruct (GPTQ, multi-node)"
-    openshift.io/description: "Polski model językowy SpeakLeash, 11B parametrów, GPTQ 4-bit, pipeline parallelism 3× NVIDIA T4"
+    openshift.io/display-name: "Bielik-11B-v2.3-Instruct (GPTQ)"
+    openshift.io/description: "Polski model językowy SpeakLeash, 11B parametrów, GPTQ 4-bit, single GPU T4"
 spec:
   replicas: 1
   model:
@@ -30,23 +29,12 @@ spec:
     containers:
       - name: main
         args:
-          - "--quantization"
-          - "gptq"
-          - "--dtype"
-          - "float16"
-          - "--tensor-parallel-size"
-          - "1"
-          - "--pipeline-parallel-size"
-          - "3"
-          - "--distributed-executor-backend"
-          - "ray"
-          - "--max-model-len"
-          - "4096"
-          - "--gpu-memory-utilization"
-          - "0.85"
+          - "--quantization=gptq"
+          - "--dtype=float16"
+          - "--max-model-len=4096"
+          - "--gpu-memory-utilization=0.85"
           - "--trust-remote-code"
-          - "--chat-template"
-          - "chatml"
+          - "--enforce-eager"
         env:
           - name: HF_HOME
             value: "/tmp/hf_home"
