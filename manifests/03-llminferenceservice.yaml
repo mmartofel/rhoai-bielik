@@ -1,161 +1,64 @@
-# =============================================================================
-# LLMInferenceService — Bielik-11B-v2.3-Instruct-GPTQ
-# RHOAI 3.4 / llm-d / distributed inference przez pipeline parallelism (Ray)
-#
-# ⚠️  TECHNOLOGY PREVIEW — nie używaj w środowiskach produkcyjnych
-# =============================================================================
-apiVersion: serving.kserve.io/v1alpha1
+apiVersion: serving.kserve.io/v1alpha2
 kind: LLMInferenceService
 metadata:
   name: bielik-11b-multinode
   namespace: bielik-demo
   labels:
-    app: bielik-11b
-    version: v2.3
+    opendatahub.io/dashboard: "true"
+    opendatahub.io/genai-asset: "true"
   annotations:
-    # Wyłącz autentykację dla celów demo — w produkcji ustaw "true"
+    # Hardware profile zarządza GPU scheduling, nodeSelector i tolerations
+    opendatahub.io/hardware-profile-name: gpu-profile
+    opendatahub.io/hardware-profile-namespace: redhat-ods-applications
+    opendatahub.io/model-type: generative
     security.opendatahub.io/enable-auth: "false"
-    # Referencja do AcceleratorProfile z manifests/05-accelerator-profile.yaml
-    # RHOAI Dashboard i llm-d używają tego aby dobrać nodeSelector i toleracje
-    opendatahub.io/accelerator-name: "nvidia-t4"
-    # Opis widoczny w RHOAI Dashboard
     openshift.io/display-name: "Bielik-11B-v2.3-Instruct (GPTQ, multi-node)"
-    openshift.io/description: "Polski model językowy SpeakLeash, 11B parametrów, kwantyzacja GPTQ 4-bit, pipeline parallelism na 3× NVIDIA T4"
+    openshift.io/description: "Polski model językowy SpeakLeash, 11B parametrów, GPTQ 4-bit, pipeline parallelism 3× NVIDIA T4"
 spec:
-  # Jedna replika serwisu (llm-d zarządza wewnętrznymi podami pipeline)
   replicas: 1
-
   model:
-    # URI modelu na HuggingFace Hub — llm-d pobierze model używając HF_TOKEN
     uri: "hf://speakleash/Bielik-11B-v2.3-Instruct-GPTQ"
-    # Nazwa modelu eksponowana przez OpenAI-compatible API (/v1/models)
     name: "bielik-11b"
-
-  # Konfiguracja routera HTTP (llm-d wstrzykuje swoje defaults)
-  router: {}
-
-  # Konfiguracja Inference Gateway (Envoy/Gateway API)
-  gateway: {}
-
-  # Scheduler llm-d (zarządza rozmieszczeniem pipeline stages)
-  scheduler: {}
-
+  router:
+    gateway:
+      refs:
+        - name: maas-default-gateway
+          namespace: openshift-ingress
+    route: {}
+    scheduler: {}
   template:
-    metadata:
-      labels:
-        app: bielik-11b
-        component: inference
-
-    spec:
-      # --- Wymuszenie rozmieszczenia podów na różnych nodach ---
-      # Każdy pipeline stage (pod) musi być na osobnym nodzie fizycznym
-      # aby każdy miał dostęp do własnego GPU
-      affinity:
-        podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            - labelSelector:
-                matchLabels:
-                  app: bielik-11b
-              # Jeden pod per hostname (nod Kubernetes)
-              topologyKey: "kubernetes.io/hostname"
-
-      # --- Toleracje dla taintu GPU Operator ---
-      # GPU Operator nakłada taint nvidia.com/gpu=present:NoSchedule na nody GPU.
-      # Bez toleracji scheduler odrzuci pody mimo pasującego nodeSelector.
-      # Profil AcceleratorProfile 'nvidia-t4' deklaruje tę samą tolerację —
-      # tutaj ją powtarzamy jawnie dla pewności niezależnie od wersji llm-d.
-      tolerations:
-        - key: "nvidia.com/gpu"
-          operator: "Exists"
-          effect: "NoSchedule"
-
-      # --- Kieruj pody tylko na nody z GPU (zgodnie z profilem nvidia-t4) ---
-      nodeSelector:
-        nvidia.com/gpu.present: "true"
-
-      containers:
-        - name: main
-          # Obraz wLLM używany przez llm-d (llm-d może nadpisać na swój własny)
-          # Rzeczywisty obraz może być skonfigurowany przez DataScienceCluster
-          image: "quay.io/modh/vllm:rhoai-3.4-cuda"
-
-          # --- Argumenty vLLM ---
-          args:
-            # Kwantyzacja GPTQ — Bielik-11B-v2.3-Instruct-GPTQ jest już w formacie GPTQ 4-bit
-            - "--quantization"
-            - "gptq"
-            # Typ danych — float16 wymagane dla T4 (brak obsługi bfloat16 na T4)
-            - "--dtype"
-            - "float16"
-            # Tensor parallelism: 1 (jeden GPU per nod na g4dn.2xlarge)
-            - "--tensor-parallel-size"
-            - "1"
-            # Pipeline parallelism: 3 nody = 3 stages (model podzielony na 3 części)
-            - "--pipeline-parallel-size"
-            - "3"
-            # Backend komunikacji między nodami — Ray zarządza pipeline stages
-            - "--distributed-executor-backend"
-            - "ray"
-            # Maksymalna długość sekwencji — ograniczone przez VRAM T4 (16GB)
-            - "--max-model-len"
-            - "4096"
-            # Procent VRAM przeznaczony na KV cache — 0.85 zostawia margines na Ray
-            - "--gpu-memory-utilization"
-            - "0.85"
-            # Wymagane dla modeli community (Bielik ma własny tokenizer/kod)
-            - "--trust-remote-code"
-            # Template konwersacji — Bielik-11B używa formatu ChatML
-            - "--chat-template"
-            - "chatml"
-
-          env:
-            # Token HuggingFace do pobrania modelu — wczytywany z Secret 'hf-token'
-            - name: HF_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: hf-token
-                  key: token
-
-            # Metoda tworzenia procesów workera vLLM — 'spawn' wymagane dla CUDA
-            - name: VLLM_WORKER_MULTIPROC_METHOD
-              value: "spawn"
-
-            # Poziom logowania NCCL — WARN aby zmniejszyć szum w logach
-            # Ustaw na INFO/DEBUG przy problemach z komunikacją GPU
-            - name: NCCL_DEBUG
-              value: "WARN"
-
-            # Katalog cache HuggingFace — model pobierany tutaj przed załadowaniem
-            - name: HF_HOME
-              value: "/tmp/huggingface"
-
-          resources:
-            requests:
-              # 4 CPU cores do obsługi tokenizacji i ogólnego przetwarzania
-              cpu: "4"
-              # 16GB RAM — bufor na wagi modelu w pamięci CPU przed transferem na GPU
-              memory: "16Gi"
-              # 1 GPU T4 (16GB VRAM) per pod/stage pipeline
-              nvidia.com/gpu: "1"
-            limits:
-              cpu: "8"
-              memory: "24Gi"
-              nvidia.com/gpu: "1"
-
-          # Sprawdzenie czy model jest załadowany i gotowy na requestów
-          # Długi initialDelaySeconds bo pobieranie 7GB modelu GPTQ zajmuje czas
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 8080
-            initialDelaySeconds: 300
-            periodSeconds: 30
-            failureThreshold: 10
-
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 8080
-            initialDelaySeconds: 300
-            periodSeconds: 60
-            failureThreshold: 5
+    containers:
+      - name: main
+        args:
+          - "--quantization"
+          - "gptq"
+          - "--dtype"
+          - "float16"
+          - "--tensor-parallel-size"
+          - "1"
+          - "--pipeline-parallel-size"
+          - "3"
+          - "--distributed-executor-backend"
+          - "ray"
+          - "--max-model-len"
+          - "4096"
+          - "--gpu-memory-utilization"
+          - "0.85"
+          - "--trust-remote-code"
+          - "--chat-template"
+          - "chatml"
+        env:
+          - name: HF_HOME
+            value: "/tmp/hf_home"
+        envFrom:
+          - secretRef:
+              name: huggingface-token
+        resources:
+          requests:
+            cpu: "4"
+            memory: "16Gi"
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "8"
+            memory: "24Gi"
+            nvidia.com/gpu: "1"
