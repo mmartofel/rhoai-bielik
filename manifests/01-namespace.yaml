@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bielik-demo
+  labels:
+    # Wymagane aby namespace pojawił się w RHOAI Dashboard
+    opendatahub.io/dashboard: "true"
+    # Standardowe etykiety OpenShift
+    kubernetes.io/metadata.name: bielik-demo
+  annotations:
+    # Opis namespace widoczny w konsoli
+    openshift.io/description: "Demo deployment modelu Bielik-11B-v2.3-Instruct na RHOAI 3.4 z distributed inference (llm-d)"
+    openshift.io/display-name: "Bielik-11B Demo"

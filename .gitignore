@@ -1,0 +1,42 @@
+# =============================================================================
+# .gitignore — Bielik-11B RHOAI Deployment
+# =============================================================================
+
+# --- Pliki z prawdziwymi tokenami / sekretami ---
+# config.env z uzupełnionym HF_TOKEN NIE powinien być commitowany
+# Commitowany jest tylko szablon z HF_TOKEN=""
+config/config.env.local
+config/*.secret.env
+
+# Wygenerowany secret z tokenem HuggingFace (tworzony przez deploy.sh z envsubst)
+manifests/02-hf-secret.yaml
+
+# Jakiekolwiek pliki z tokenami/kluczami
+*.token
+*.key
+*.pem
+*.p12
+*.secret
+
+# Pliki kubeconfig
+kubeconfig
+.kubeconfig
+*.kubeconfig
+
+# --- Pliki tymczasowe ---
+*.bak
+*.tmp
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# --- Logi ---
+*.log
+logs/
+
+# --- Edytory ---
+.vscode/
+.idea/
+*.iml
