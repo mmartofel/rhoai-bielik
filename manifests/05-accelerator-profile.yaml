@@ -1,0 +1,28 @@
+# =============================================================================
+# AcceleratorProfile — NVIDIA T4 (g4dn.2xlarge)
+# Zasób RHOAI Dashboard definiujący profil GPU do użycia przez LLMInferenceService
+#
+# WAŻNE: AcceleratorProfile musi być w namespace redhat-ods-applications
+# (lub innym namespace gdzie działa RHOAI Dashboard)
+# =============================================================================
+apiVersion: dashboard.opendatahub.io/v1alpha1
+kind: AcceleratorProfile
+metadata:
+  name: nvidia-t4
+  # AcceleratorProfile żyje w namespace RHOAI Dashboard, nie w namespace modelu
+  namespace: redhat-ods-applications
+  labels:
+    app.kubernetes.io/part-of: rhoai
+spec:
+  displayName: "NVIDIA T4 (g4dn.2xlarge)"
+  enabled: true
+
+  # Identyfikator zasobu GPU — musi pasować do resource request w podzie
+  identifier: nvidia.com/gpu
+
+  # Toleracje dla standardowego taintu nakładanego przez NVIDIA GPU Operator
+  # GPU Operator taintuje nody: nvidia.com/gpu=present:NoSchedule
+  tolerations:
+    - key: "nvidia.com/gpu"
+      operator: "Exists"
+      effect: "NoSchedule"

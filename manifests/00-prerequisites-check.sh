@@ -169,7 +169,21 @@ if [ -n "${GPU_OP_NS}" ]; then
     fi
 fi
 
-# --- 8. Node Feature Discovery ---
+# --- 8. AcceleratorProfile CRD i profil nvidia-t4 ---
+log_info "Sprawdzanie AcceleratorProfile (GPU profile)..."
+if ! oc get crd acceleratorprofiles.dashboard.opendatahub.io &>/dev/null; then
+    log_warn "CRD AcceleratorProfile nie istnieje — profil GPU nie będzie zarejestrowany w Dashboard"
+    echo "  → deploy.sh zastosuje AcceleratorProfile po zainstalowaniu RHOAI Dashboard"
+else
+    PROFILE_EXISTS=$(oc get acceleratorprofile nvidia-t4 -n redhat-ods-applications &>/dev/null && echo "yes" || echo "no")
+    if [ "${PROFILE_EXISTS}" = "yes" ]; then
+        log_success "AcceleratorProfile 'nvidia-t4' już istnieje w redhat-ods-applications"
+    else
+        log_warn "AcceleratorProfile 'nvidia-t4' nie istnieje — zostanie stworzony przez deploy.sh (krok 4)"
+    fi
+fi
+
+# --- 9. Node Feature Discovery ---
 log_info "Sprawdzanie Node Feature Discovery (NFD)..."
 NFD_NS=$(oc get namespace --no-headers 2>/dev/null | awk '{print $1}' | grep -i "nfd\|node-feature" | head -1 || echo "")
 if [ -z "${NFD_NS}" ]; then

@@ -15,6 +15,9 @@ metadata:
   annotations:
     # Wyłącz autentykację dla celów demo — w produkcji ustaw "true"
     security.opendatahub.io/enable-auth: "false"
+    # Referencja do AcceleratorProfile z manifests/05-accelerator-profile.yaml
+    # RHOAI Dashboard i llm-d używają tego aby dobrać nodeSelector i toleracje
+    opendatahub.io/accelerator-name: "nvidia-t4"
     # Opis widoczny w RHOAI Dashboard
     openshift.io/display-name: "Bielik-11B-v2.3-Instruct (GPTQ, multi-node)"
     openshift.io/description: "Polski model językowy SpeakLeash, 11B parametrów, kwantyzacja GPTQ 4-bit, pipeline parallelism na 3× NVIDIA T4"
@@ -56,7 +59,17 @@ spec:
               # Jeden pod per hostname (nod Kubernetes)
               topologyKey: "kubernetes.io/hostname"
 
-      # --- Kieruj pody tylko na nody z GPU ---
+      # --- Toleracje dla taintu GPU Operator ---
+      # GPU Operator nakłada taint nvidia.com/gpu=present:NoSchedule na nody GPU.
+      # Bez toleracji scheduler odrzuci pody mimo pasującego nodeSelector.
+      # Profil AcceleratorProfile 'nvidia-t4' deklaruje tę samą tolerację —
+      # tutaj ją powtarzamy jawnie dla pewności niezależnie od wersji llm-d.
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+
+      # --- Kieruj pody tylko na nody z GPU (zgodnie z profilem nvidia-t4) ---
       nodeSelector:
         nvidia.com/gpu.present: "true"
 

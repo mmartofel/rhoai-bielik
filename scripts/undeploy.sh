@@ -42,6 +42,8 @@ case "${CONFIRM:-N}" in
     *) echo "Anulowano."; exit 0 ;;
 esac
 
+# HF_TOKEN był wstrzyknięty do Deployment — zostanie usunięty wraz z LLMInferenceService poniżej
+
 # --- Usunięcie LLMInferenceService ---
 log_info "Usuwanie LLMInferenceService 'bielik-11b-multinode'..."
 if oc get llminferenceservice bielik-11b-multinode -n "${NAMESPACE}" &>/dev/null; then

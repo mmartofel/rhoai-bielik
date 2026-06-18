@@ -85,7 +85,7 @@ export HF_TOKEN NAMESPACE
 # =============================================================================
 # KROK 3: Tworzenie namespace
 # =============================================================================
-log_step "Krok 3/6: Tworzenie namespace '${NAMESPACE}'"
+log_step "Krok 3/7: Tworzenie namespace '${NAMESPACE}'"
 
 oc apply -f "${REPO_DIR}/manifests/01-namespace.yaml"
 log_success "Namespace '${NAMESPACE}' gotowy"
@@ -93,9 +93,9 @@ log_success "Namespace '${NAMESPACE}' gotowy"
 # =============================================================================
 # KROK 4: Tworzenie Secret z tokenem HuggingFace
 # =============================================================================
-log_step "Krok 4/6: Tworzenie Secret 'hf-token' w namespace '${NAMESPACE}'"
+log_step "Krok 4/8: Tworzenie Secret 'hf-token' w namespace '${NAMESPACE}'"
 
-# Generuj secret z template przez envsubst — nigdy nie commituj wynikowego pliku
+# Secret musi istnieć PRZED ClusterStorageContainer (krok 5), bo CSC go referuje
 if ! command -v envsubst &>/dev/null; then
     die "Narzędzie 'envsubst' nie jest dostępne. Zainstaluj 'gettext': brew install gettext (macOS) lub apt-get install gettext (Linux)"
 fi
@@ -103,10 +103,28 @@ fi
 envsubst < "${REPO_DIR}/manifests/02-hf-secret.yaml.template" | oc apply -f -
 log_success "Secret 'hf-token' zastosowany w namespace '${NAMESPACE}'"
 
+# Krok 5 usunięty — ClusterStorageContainer nie jest używany przez llm-d controller.
+# llm-d (llmisvc-controller-manager) generuje storage-initializer init container
+# bezpośrednio (ignorując ClusterStorageContainer). HF_TOKEN jest wstrzykiwany
+# do Deployment w kroku 7b, po tym jak llm-d stworzy Deployment z LLMInferenceService.
+
 # =============================================================================
-# KROK 5: Deployment LLMInferenceService
+# KROK 6: AcceleratorProfile (GPU profile dla NVIDIA T4)
 # =============================================================================
-log_step "Krok 5/6: Tworzenie LLMInferenceService 'bielik-11b-multinode'"
+log_step "Krok 6/8: Tworzenie AcceleratorProfile 'nvidia-t4'"
+
+if oc get crd acceleratorprofiles.dashboard.opendatahub.io &>/dev/null; then
+    oc apply -f "${REPO_DIR}/manifests/05-accelerator-profile.yaml"
+    log_success "AcceleratorProfile 'nvidia-t4' zastosowany w namespace redhat-ods-applications"
+else
+    log_warn "CRD AcceleratorProfile nie jest dostępny w tym klastrze — pomijam"
+    log_warn "Pody będą używać nodeSelector + tolerations (GPU scheduling działa bez profilu)"
+fi
+
+# =============================================================================
+# KROK 7: Deployment LLMInferenceService
+# =============================================================================
+log_step "Krok 7/8: Tworzenie LLMInferenceService 'bielik-11b-multinode'"
 
 oc apply -f "${REPO_DIR}/manifests/03-llminferenceservice.yaml"
 log_success "LLMInferenceService zaaplikowany"
@@ -123,9 +141,55 @@ echo "  GPU memory util:      ${GPU_MEMORY_UTILIZATION}"
 echo ""
 
 # =============================================================================
-# KROK 6: Oczekiwanie na status READY
+# KROK 7b: Wstrzyknięcie HF_TOKEN do storage-initializer init container
 # =============================================================================
-log_step "Krok 6/6: Oczekiwanie na READY (timeout: $((DEPLOY_TIMEOUT_SECONDS / 60)) minut)"
+log_step "Krok 7b: Wstrzyknięcie HF_TOKEN do storage-initializer init container"
+
+# llm-d controller tworzy Deployment bezpośrednio z własnym storage-initializer,
+# ignorując ClusterStorageContainer. Musimy patchować Deployment PO jego stworzeniu.
+# Patch przetrwa — llm-d reconciluje Deployment TYLKO przy zmianach w LLMInferenceService.
+#
+# Używamy strategic-merge patch zamiast json-patch:
+# - json-patch /env/- wymaga że pole 'env' już istnieje → fragile
+# - strategic-merge scala po kluczu 'name' kontenera → działa zawsze
+log_info "Oczekiwanie na Deployment 'bielik-11b-multinode-kserve' z init container (max 90s)..."
+WAIT_DEPLOY=0
+while [ "${WAIT_DEPLOY}" -lt 90 ]; do
+    # Poczekaj aż Deployment istnieje ORAZ storage-initializer jest już w spec
+    INIT_CONTAINER=$(oc get deployment bielik-11b-multinode-kserve -n "${NAMESPACE}" \
+        -o jsonpath='{.spec.template.spec.initContainers[?(@.name=="storage-initializer")].name}' \
+        2>/dev/null || echo "")
+    if [ "${INIT_CONTAINER}" = "storage-initializer" ]; then
+        break
+    fi
+    sleep 3
+    WAIT_DEPLOY=$((WAIT_DEPLOY + 3))
+done
+
+if [ "${INIT_CONTAINER:-}" != "storage-initializer" ]; then
+    log_warn "Deployment z storage-initializer nie pojawił się w 90s — pomijam inject HF_TOKEN"
+    log_warn "Uruchom ręcznie: oc patch deployment bielik-11b-multinode-kserve -n ${NAMESPACE} --type=strategic-merge -p='{\"spec\":{\"template\":{\"spec\":{\"initContainers\":[{\"name\":\"storage-initializer\",\"env\":[{\"name\":\"HF_TOKEN\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"hf-token\",\"key\":\"token\"}}}]}]}}}}'"
+else
+    # Sprawdź czy HF_TOKEN już jest (idempotentność)
+    EXISTING_HF=$(oc get deployment bielik-11b-multinode-kserve -n "${NAMESPACE}" \
+        -o jsonpath='{.spec.template.spec.initContainers[?(@.name=="storage-initializer")].env[?(@.name=="HF_TOKEN")].name}' \
+        2>/dev/null || echo "")
+    if [ "${EXISTING_HF}" = "HF_TOKEN" ]; then
+        log_success "HF_TOKEN już jest w storage-initializer — pomijam patch"
+    else
+        # Strategic-merge scala init container po polu 'name' — dodaje env bez nadpisywania reszty
+        oc patch deployment bielik-11b-multinode-kserve -n "${NAMESPACE}" \
+            --type='strategic-merge' \
+            -p='{"spec":{"template":{"spec":{"initContainers":[{"name":"storage-initializer","env":[{"name":"HF_TOKEN","valueFrom":{"secretKeyRef":{"name":"hf-token","key":"token"}}}]}]}}}}'
+        log_success "HF_TOKEN wstrzyknięty do storage-initializer (strategic-merge po nazwie kontenera)"
+        log_info "Deployment rollout — nowe pody pobiorą model z HF_TOKEN..."
+    fi
+fi
+
+# =============================================================================
+# KROK 8: Oczekiwanie na status READY
+# =============================================================================
+log_step "Krok 8/8: Oczekiwanie na READY (timeout: $((DEPLOY_TIMEOUT_SECONDS / 60)) minut)"
 
 log_info "llm-d musi pobrać model (~7GB) i rozłożyć go na ${PIPELINE_PARALLEL_SIZE} nody..."
 log_info "Polling co ${POLL_INTERVAL_SECONDS}s. Możesz śledzić postęp: ./scripts/status.sh"
