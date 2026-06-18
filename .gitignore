@@ -3,8 +3,9 @@
 # =============================================================================
 
 # --- Pliki z prawdziwymi tokenami / sekretami ---
-# config.env z uzupełnionym HF_TOKEN NIE powinien być commitowany
-# Commitowany jest tylko szablon z HF_TOKEN=""
+# config.env zawiera realny HF_TOKEN — nigdy nie commituj
+# Używaj config/config.env.example jako szablonu
+config/config.env
 config/config.env.local
 config/*.secret.env
 
