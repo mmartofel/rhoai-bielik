@@ -38,21 +38,21 @@ echo -e "${BOLD}╚════════════════════�
 # =============================================================================
 log_section "LLMInferenceService"
 
-if ! oc get llminferenceservice bielik-11b-multinode -n "${NAMESPACE}" &>/dev/null; then
-    log_error "LLMInferenceService 'bielik-11b-multinode' nie istnieje w namespace '${NAMESPACE}'"
+if ! oc get llminferenceservice bielik-11b -n "${NAMESPACE}" &>/dev/null; then
+    log_error "LLMInferenceService 'bielik-11b' nie istnieje w namespace '${NAMESPACE}'"
     echo "  → Uruchom deployment: ./scripts/deploy.sh"
     return 1
 fi
 
-oc get llminferenceservice bielik-11b-multinode -n "${NAMESPACE}" \
+oc get llminferenceservice bielik-11b -n "${NAMESPACE}" \
     -o custom-columns=\
 'NAME:.metadata.name,READY:.status.conditions[?(@.type=="Ready")].status,URL:.status.url' \
-    2>/dev/null || oc get llminferenceservice bielik-11b-multinode -n "${NAMESPACE}"
+    2>/dev/null || oc get llminferenceservice bielik-11b -n "${NAMESPACE}"
 
 # Szczegóły warunków
 echo ""
 log_info "Warunki statusu:"
-oc get llminferenceservice bielik-11b-multinode -n "${NAMESPACE}" \
+oc get llminferenceservice bielik-11b -n "${NAMESPACE}" \
     -o jsonpath='{range .status.conditions[*]}  {.type}: {.status} ({.reason}) — {.message}{"\n"}{end}' \
     2>/dev/null || true
 

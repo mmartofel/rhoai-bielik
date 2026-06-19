@@ -24,7 +24,7 @@ log_section() { echo -e "\n${BOLD}${CYAN}━━━ $* ━━━${NC}"; }
 
 # --- Pobierz URL endpointu z LLMInferenceService ---
 log_info "Pobieranie URL endpointu z LLMInferenceService..."
-ENDPOINT_URL=$(oc get llminferenceservice bielik-11b-multinode \
+ENDPOINT_URL=$(oc get llminferenceservice bielik-11b \
     -n "${NAMESPACE}" \
     -o jsonpath='{.status.url}' 2>/dev/null || echo "")
 

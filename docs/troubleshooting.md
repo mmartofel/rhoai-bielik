@@ -10,7 +10,7 @@
 oc get events -n bielik-demo --sort-by=.lastTimestamp -w
 
 # Describe the LLMInferenceService
-oc describe llminferenceservice bielik-11b-multinode -n bielik-demo
+oc describe llminferenceservice bielik-11b -n bielik-demo
 
 # Pod logs (replace POD_NAME)
 oc logs -f POD_NAME -n bielik-demo --tail=100
@@ -75,7 +75,7 @@ oc rollout restart daemonset -n nvidia-gpu-operator node-feature-discovery-worke
 **Check 1: Verify HF_TOKEN**
 ```bash
 # Check the secret exists and has a token
-oc get secret hf-token -n bielik-demo -o jsonpath='{.data.token}' | base64 -d | wc -c
+oc get secret huggingface-token -n bielik-demo -o jsonpath='{.data.HF_TOKEN}' | base64 -d | wc -c
 # Should print a non-zero length
 
 # Test token validity (from local machine):
@@ -145,7 +145,7 @@ oc exec POD_A -n bielik-demo -- nc -zv POD_B_IP 6379
 # Edit config/config.env:
 MAX_MODEL_LEN=2048   # down from 4096
 
-# Or directly in manifests/03-llminferenceservice.yaml, change:
+# Or directly in manifests/06-llminferenceservice.yaml, change:
 # --max-model-len 2048
 ```
 
@@ -176,7 +176,7 @@ oc logs POD_NAME -n bielik-demo | grep -i "gptq\|quantiz"
 
 **Step 1: Describe the LLMInferenceService**
 ```bash
-oc describe llminferenceservice bielik-11b-multinode -n bielik-demo
+oc describe llminferenceservice bielik-11b -n bielik-demo
 # Look at: Status.Conditions, Events
 ```
 
@@ -191,9 +191,9 @@ oc logs -f "${CONTROLLER_POD}" -n "${CONTROLLER_NS}" | grep -i "bielik\|error\|w
 
 **Step 3: Verify CRD version**
 ```bash
-# Ensure the CRD supports v1alpha1
+# Ensure the CRD supports v1alpha2
 oc get crd llminferenceservices.serving.kserve.io -o jsonpath='{.spec.versions[*].name}'
-# Should include: v1alpha1
+# Should include: v1alpha2
 ```
 
 **Step 4: Check for admission webhook rejection**
@@ -257,5 +257,53 @@ oc describe nodes | grep -A6 'Allocated resources' | grep 'nvidia.com/gpu'
 oc delete pod POD_NAME -n bielik-demo --grace-period=0 --force
 
 # Get raw JSON status of LLMInferenceService
-oc get llminferenceservice bielik-11b-multinode -n bielik-demo -o json | python3 -m json.tool
+oc get llminferenceservice bielik-11b -n bielik-demo -o json | python3 -m json.tool
+```
+
+---
+
+## Problem: Model transfer Job fails
+
+**Symptoms**: `oc get job bielik-model-transfer -n bielik-demo` shows Failed, or Job never completes.
+
+**Check 1: View Job logs**
+```bash
+oc logs job/bielik-model-transfer -n bielik-demo
+```
+
+**Check 2: Network egress to HuggingFace**
+```bash
+# Test connectivity from the transfer Job namespace
+oc run hf-test --namespace=bielik-demo --rm -i --restart=Never \
+  --image=python:3.11-slim \
+  -- python3 -c "import urllib.request; urllib.request.urlopen('https://huggingface.co', timeout=10); print('OK')"
+# If this fails: cluster has no egress to internet — contact cluster admin
+```
+
+**Check 3: MinIO connectivity from transfer Job**
+```bash
+# Test cross-namespace reach to MinIO
+oc run minio-test --namespace=bielik-demo --rm -i --restart=Never \
+  --image=quay.io/minio/mc:latest \
+  -- mc alias set local http://minio.rhoai-model-registries.svc.cluster.local:9000 minio minio123
+# Should print: Added `local` successfully.
+```
+
+**Check 4: MinIO is running**
+```bash
+oc get pods -n rhoai-model-registries -l app=minio
+oc logs deployment/minio -n rhoai-model-registries
+```
+
+**Check 5: Verify model in MinIO after successful transfer**
+```bash
+MINIO_POD=$(oc get pod -n rhoai-model-registries -l app=minio -o name | head -1)
+oc exec ${MINIO_POD} -n rhoai-model-registries -- ls /data/bielik-models/Bielik-11B-v2.3-Instruct-GPTQ/
+# Should list: config.json, *.safetensors, tokenizer files, etc.
+```
+
+**Re-run transfer after fixing the issue:**
+```bash
+oc delete job bielik-model-transfer -n bielik-demo --ignore-not-found
+./scripts/deploy.sh --skip-prereqs --skip-transfer=false
 ```

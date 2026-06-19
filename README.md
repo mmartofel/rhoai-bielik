@@ -2,7 +2,9 @@
 
 > **⚠️ Technology Preview** — llm-d i `LLMInferenceService` to funkcje w wersji Technology Preview w RHOAI 3.4. Nie przeznaczone do zastosowań produkcyjnych.
 
-Repozytorium do wdrożenia polskiego modelu językowego **Bielik-11B-v2.3-Instruct** (projekt [SpeakLeash](https://speakleash.org/)) na klastrze **Red Hat OpenShift AI 3.4** z wykorzystaniem **distributed inference przez llm-d**. Deployment demonstruje uruchomienie modelu 11B na wielu nodach g4dn.2xlarge (AWS, 1× NVIDIA T4 16GB per node) z użyciem **pipeline parallelism przez Ray**.
+Repozytorium do wdrożenia polskiego modelu językowego **Bielik-11B-v2.3-Instruct** (projekt [SpeakLeash](https://speakleash.org/)) na klastrze **Red Hat OpenShift AI 3.4** z wykorzystaniem **distributed inference przez llm-d**.
+
+Model jest pobierany z HuggingFace **jednorazowo** i przechowywany w **lokalnym MinIO** (klaster-wewnętrzne S3). Wszystkie kolejne uruchomienia podów ładują model z MinIO — bez zależności od dostępności HuggingFace.
 
 ---
 
@@ -61,25 +63,29 @@ oc login https://<twoj-klaster>:6443
 ## Struktura repozytorium
 
 ```
-bielik-rhoai-multinode/
-├── README.md                        # Ten plik
-├── .gitignore
+rhoai-bielik/
+├── README.md
 ├── config/
-│   └── config.env                   # Zmienne konfiguracyjne (uzupełnij HF_TOKEN)
+│   ├── config.env                        # Konfiguracja (uzupełnij HF_TOKEN; nie commituj!)
+│   └── config.env.example                # Szablon bez tokenu — wersjonowany w git
 ├── manifests/
-│   ├── 00-prerequisites-check.sh    # Weryfikacja prereqs przed deploymentem
-│   ├── 01-namespace.yaml            # Namespace bielik-demo
-│   ├── 02-hf-secret.yaml.template   # Szablon Secret z HF tokenem
-│   ├── 03-llminferenceservice.yaml  # Główny manifest LLMInferenceService
-│   └── 04-test-inference.sh         # Testy inference po deploymencie
+│   ├── 00-prerequisites-check.sh         # Weryfikacja prereqs (GPU nody, llm-d, CRDs)
+│   ├── 01-namespace.yaml                 # Namespace bielik-demo
+│   ├── 02-minio.yaml                     # MinIO S3 w rhoai-model-registries (jednorazowo)
+│   ├── 03-hf-secret.yaml.template        # Secret z HF tokenem (dla Job transferu)
+│   ├── 04-s3-connection.yaml.template    # Secret z danymi dostępu do MinIO
+│   ├── 04-test-inference.sh              # Testy inference po deploymencie
+│   ├── 05-accelerator-profile.yaml       # AcceleratorProfile: NVIDIA T4
+│   ├── 05-model-transfer-job.yaml.template  # Job: HuggingFace → MinIO (jednorazowo)
+│   └── 06-llminferenceservice.yaml       # LLMInferenceService (spec.worker → multi-node)
 ├── scripts/
-│   ├── deploy.sh                    # Pełny deployment (prereqs → namespace → service → wait)
-│   ├── undeploy.sh                  # Usunięcie wszystkich zasobów
-│   ├── status.sh                    # Status deploymentu + walidacja multi-node
-│   └── port-forward.sh              # Lokalny dostęp przez port-forward
+│   ├── deploy.sh                         # Pełny deployment (MinIO → transfer → LLIS → wait)
+│   ├── undeploy.sh                       # Usunięcie zasobów
+│   ├── status.sh                         # Status deploymentu
+│   └── port-forward.sh                   # Lokalny dostęp przez port-forward
 └── docs/
-    ├── architecture.md              # Architektura, diagram ASCII, wyjaśnienie pipeline parallelism
-    └── troubleshooting.md           # Rozwiązywanie typowych problemów
+    ├── architecture.md                   # Architektura: MinIO, LeaderWorkerSet, pipeline parallel
+    └── troubleshooting.md                # Rozwiązywanie typowych problemów
 ```
 
 ---
@@ -165,7 +171,8 @@ Pełny przewodnik: [docs/troubleshooting.md](docs/troubleshooting.md)
 
 Najczęstsze problemy:
 - **Pod `Pending`** → sprawdź nody GPU i resource quotas
-- **Błąd pobierania modelu** → sprawdź `HF_TOKEN` i łączność sieciową
+- **Job transferu nie kończy się** → sprawdź dostęp do HuggingFace i MinIO (`oc logs job/bielik-model-transfer -n bielik-demo`)
+- **MinIO niedostępny** → sprawdź pody w `rhoai-model-registries` namespace
 - **Ray nie startuje** → sprawdź NetworkPolicy między podami
 - **OOM na T4** → zmniejsz `MAX_MODEL_LEN` lub `GPU_MEMORY_UTILIZATION`
 

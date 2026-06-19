@@ -45,12 +45,12 @@ esac
 # HF_TOKEN był wstrzyknięty do Deployment — zostanie usunięty wraz z LLMInferenceService poniżej
 
 # --- Usunięcie LLMInferenceService ---
-log_info "Usuwanie LLMInferenceService 'bielik-11b-multinode'..."
-if oc get llminferenceservice bielik-11b-multinode -n "${NAMESPACE}" &>/dev/null; then
-    oc delete llminferenceservice bielik-11b-multinode -n "${NAMESPACE}"
+log_info "Usuwanie LLMInferenceService 'bielik-11b'..."
+if oc get llminferenceservice bielik-11b -n "${NAMESPACE}" &>/dev/null; then
+    oc delete llminferenceservice bielik-11b -n "${NAMESPACE}"
     log_success "LLMInferenceService usunięty"
 else
-    log_warn "LLMInferenceService 'bielik-11b-multinode' nie istnieje — pomijam"
+    log_warn "LLMInferenceService 'bielik-11b' nie istnieje — pomijam"
 fi
 
 # --- Usunięcie Secret ---
@@ -84,11 +84,7 @@ else
 fi
 
 # Usuń wygenerowany secret file jeśli istnieje
-GENERATED_SECRET="${REPO_DIR}/manifests/02-hf-secret.yaml"
-if [ -f "${GENERATED_SECRET}" ]; then
-    rm -f "${GENERATED_SECRET}"
-    log_success "Usunięto wygenerowany plik ${GENERATED_SECRET}"
-fi
+oc delete job bielik-model-transfer -n "${NAMESPACE}" --ignore-not-found &>/dev/null || true
 
 echo ""
 log_success "Undeployment zakończony"

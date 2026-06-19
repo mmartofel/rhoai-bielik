@@ -1,7 +1,7 @@
 apiVersion: serving.kserve.io/v1alpha2
 kind: LLMInferenceService
 metadata:
-  name: bielik-11b-multinode
+  name: bielik-11b
   namespace: bielik-demo
   labels:
     opendatahub.io/dashboard: "true"
@@ -12,11 +12,13 @@ metadata:
     opendatahub.io/model-type: generative
     security.opendatahub.io/enable-auth: "false"
     openshift.io/display-name: "Bielik-11B-v2.3-Instruct (GPTQ)"
-    openshift.io/description: "Polski model językowy SpeakLeash, 11B parametrów, GPTQ 4-bit, single GPU T4"
+    openshift.io/description: "Polski model językowy SpeakLeash, 11B parametrów, GPTQ 4-bit, pipeline-parallel 3× T4 via llm-d LeaderWorkerSet"
 spec:
   replicas: 1
   model:
-    uri: "hf://speakleash/Bielik-11B-v2.3-Instruct-GPTQ"
+    # Model loaded from cluster-local MinIO — no HuggingFace download at serve time.
+    # Run 05-model-transfer-job first to populate this path.
+    uri: "s3://bielik-models/Bielik-11B-v2.3-Instruct-GPTQ/"
     name: "bielik-11b"
   router:
     gateway:
@@ -25,11 +27,11 @@ spec:
           namespace: openshift-ingress
     route: {}
     scheduler: {}
+  # spec.template  = leader pod (pipeline stage 0, Node A)
+  # spec.worker    = worker pods (pipeline stages 1..N, Nodes B, C)
+  # Presence of spec.worker triggers LeaderWorkerSet multi-node deployment.
+  # --pipeline-parallel-size=3 tells vLLM to coordinate 3 pipeline stages.
   template:
-    volumes:
-      - name: kserve-provision-location
-        persistentVolumeClaim:
-          claimName: bielik-model-cache
     containers:
       - name: main
         args:
@@ -39,12 +41,25 @@ spec:
           - "--gpu-memory-utilization=0.85"
           - "--trust-remote-code"
           - "--enforce-eager"
-        env:
-          - name: HF_HOME
-            value: "/tmp/hf_home"
+          - "--pipeline-parallel-size=3"
         envFrom:
           - secretRef:
-              name: huggingface-token
+              name: s3-data-connection
+        resources:
+          requests:
+            cpu: "1"
+            memory: "12Gi"
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "8"
+            memory: "24Gi"
+            nvidia.com/gpu: "1"
+  worker:
+    containers:
+      - name: main
+        envFrom:
+          - secretRef:
+              name: s3-data-connection
         resources:
           requests:
             cpu: "1"

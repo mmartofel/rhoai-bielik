@@ -4,7 +4,9 @@
 
 ## Overview
 
-This deployment runs **Bielik-11B-v2.3-Instruct-GPTQ** (a Polish LLM by SpeakLeash) across **3 NVIDIA T4 GPU nodes** using **pipeline parallelism** coordinated by Ray, orchestrated through the **llm-d** operator on Red Hat OpenShift AI 3.4.
+This deployment runs **Bielik-11B-v2.3-Instruct-GPTQ** (a Polish LLM by SpeakLeash) across **3 NVIDIA T4 GPU nodes** using **pipeline parallelism**, orchestrated through **llm-d** on Red Hat OpenShift AI 3.4.
+
+The model is stored in a **cluster-local MinIO instance** (S3-compatible), eliminating dependency on HuggingFace availability at serve time. The model is downloaded from HuggingFace exactly once via a Kubernetes Job, then served entirely from within the cluster on all subsequent runs.
 
 ---
 
@@ -15,155 +17,121 @@ This deployment runs **Bielik-11B-v2.3-Instruct-GPTQ** (a Polish LLM by SpeakLea
 | Model                 | Bielik-11B-v2.3-Instruct-GPTQ             |
 | Parameters            | ~11 billion                                |
 | Quantization          | GPTQ 4-bit                                 |
-| Estimated size        | ~7 GB on disk                              |
-| VRAM per node (stage) | ~7–8 GB (fits within T4 16GB)              |
-| Total VRAM used       | ~21–24 GB across 3× T4 (48 GB total)      |
-| GPU node type         | g4dn.2xlarge (1× NVIDIA T4 16GB)          |
+| Size on disk          | ~7 GB                                      |
+| GPU nodes             | 3× g4dn.2xlarge (1× NVIDIA T4 16GB each)  |
 | Parallelism strategy  | Pipeline parallel (3 stages), tensor=1    |
 | Max context length    | 4096 tokens                                |
 | Chat template         | ChatML                                     |
 
 ---
 
-## Why Pipeline Parallelism (Not Tensor Parallelism)?
-
-**Tensor parallelism** splits individual weight matrices across multiple GPUs that must communicate synchronously via high-bandwidth interconnects (NVLink, NVSwitch). It is optimal when GPUs share the same host or are connected via fast fabric.
-
-**Pipeline parallelism** splits the model *by layer groups* (stages), where each stage processes a micro-batch sequentially and passes activations to the next stage. Communication is between stages, not within a weight operation — making it far more tolerant of inter-node network latency (100Gbps Ethernet on AWS is sufficient).
-
-On **g4dn.2xlarge** instances:
-- Each node has exactly **1× T4** (no NVLink between nodes)
-- Network is AWS ENA (25–100 Gbps)
-- T4 has no NVLink port — tensor parallelism across nodes would be extremely slow
-- Pipeline parallelism via Ray is the correct strategy for this topology
+## Deployment Flow
 
 ```
-Tensor Parallel (wrong for this setup):
-  Node A GPU ←─── NVLink ───→ Node B GPU   ← requires fast interconnect
-              (not available between AWS instances)
-
-Pipeline Parallel (correct for this setup):
-  Node A GPU → activations → Node B GPU → activations → Node C GPU
-              (standard network, tolerable latency)
-```
-
----
-
-## Request Flow Diagram
-
-```
-                          ┌─────────────────────────────────────────────┐
-  Client                  │          OpenShift Cluster                   │
-  ──────                  │                                              │
-    │                     │  ┌──────────────┐                           │
-    │  HTTP POST          │  │  Inference   │  (llm-d Gateway/Router)   │
-    │  /v1/chat/          │  │  Gateway     │                           │
-    │  completions  ──────┼─▶│  (Envoy)     │                           │
-    │                     │  └──────┬───────┘                           │
-    │                     │         │ route to LLMInferenceService       │
-    │                     │  ┌──────▼───────────────────────────────┐   │
-    │                     │  │    LLMInferenceService               │   │
-    │                     │  │    bielik-11b-multinode              │   │
-    │                     │  │    (llm-d scheduler)                 │   │
-    │                     │  └──────┬───────────────────────────────┘   │
-    │                     │         │ dispatch to Ray pipeline            │
-    │                     │         │                                     │
-    │                     │  ┌──────▼──────────────────────────────┐    │
-    │                     │  │          Ray Cluster (3 workers)    │    │
-    │                     │  │                                     │    │
-    │                     │  │  ┌────────────┐                     │    │
-    │                     │  │  │  Node A    │  Stage 0            │    │
-    │                     │  │  │  g4dn.2xl  │  Layers 0–12       │    │
-    │                     │  │  │  T4 16GB   │  (embed + first ¹⁄₃)│   │
-    │                     │  │  └─────┬──────┘                     │    │
-    │                     │  │        │ activations (TCP/IP)        │    │
-    │                     │  │  ┌─────▼──────┐                     │    │
-    │                     │  │  │  Node B    │  Stage 1            │    │
-    │                     │  │  │  g4dn.2xl  │  Layers 13–24      │    │
-    │                     │  │  │  T4 16GB   │  (middle ¹⁄₃)       │   │
-    │                     │  │  └─────┬──────┘                     │    │
-    │                     │  │        │ activations (TCP/IP)        │    │
-    │                     │  │  ┌─────▼──────┐                     │    │
-    │                     │  │  │  Node C    │  Stage 2            │    │
-    │                     │  │  │  g4dn.2xl  │  Layers 25–40      │    │
-    │                     │  │  │  T4 16GB   │  (last ¹⁄₃ + head) │   │
-    │                     │  │  └─────┬──────┘                     │    │
-    │                     │  │        │ output logits               │    │
-    │                     │  └────────┼────────────────────────────┘    │
-    │                     │           │ sampled tokens                   │
-    │◀────────────────────┼───────────┘                                 │
-    │  JSON response      │                                              │
-                          └─────────────────────────────────────────────┘
+[One time only]
+HuggingFace Hub
+    │  hf://speakleash/Bielik-11B-v2.3-Instruct-GPTQ
+    ▼
+Kubernetes Job (bielik-model-transfer)
+    │  huggingface_hub.snapshot_download() → aws s3 sync
+    ▼
+MinIO  (rhoai-model-registries namespace)
+    │  s3://bielik-models/Bielik-11B-v2.3-Instruct-GPTQ/
+    ▼
+[Every deploy / pod restart — fast, cluster-local]
+LLMInferenceService (bielik-11b)
+    │  spec.worker → LeaderWorkerSet (3 pods)
+    ├── Pod 0 — leader  (pipeline stage 0)  Node A T4
+    ├── Pod 1 — worker  (pipeline stage 1)  Node B T4
+    └── Pod 2 — worker  (pipeline stage 2)  Node C T4
+         └── vLLM  --pipeline-parallel-size=3
 ```
 
 ---
 
-## How Ray Manages Inter-Node Communication
+## MinIO — Cluster-Local Model Storage
 
-Ray is a distributed computing framework that llm-d uses as the execution backend for pipeline parallelism (`--distributed-executor-backend ray`).
+MinIO runs in the `rhoai-model-registries` namespace and is accessible from any namespace via:
 
-**Ray cluster setup** (managed by llm-d):
-1. One pod acts as **Ray head node** — coordinates scheduling and owns the pipeline driver
-2. Other pods act as **Ray worker nodes** — each hosts one pipeline stage
-3. Ray uses gRPC for control plane, and NCCL/TCP for tensor communication between stages
+```
+http://minio.rhoai-model-registries.svc.cluster.local:9000
+```
 
-**Key environment variables**:
-- `VLLM_WORKER_MULTIPROC_METHOD=spawn` — required for CUDA multiprocessing (avoids fork-safety issues)
-- `NCCL_DEBUG=WARN` — reduces NCCL logging noise; set to `INFO` to debug communication issues
+It is intentionally placed outside `bielik-demo` so it can serve as general-purpose S3 storage for the RHOAI Model Registry and future models beyond Bielik.
 
-**What happens during a request**:
-1. vLLM tokenizes the input on the driver (Stage 0 pod)
-2. Embeddings are computed on Stage 0 (Node A T4)
-3. Activations are sent via TCP to Stage 1 (Node B T4)
-4. Stage 1 processes its layers, sends activations to Stage 2 (Node C T4)
-5. Stage 2 computes logits and returns the sampled token to the driver
-6. This repeats for each generated token (autoregressive decoding)
-
-**KV Cache**: Each stage keeps its own KV cache in local GPU memory. With 3 stages and 4096 max context, each T4 stores the KV cache for its own layers only.
+| Component | Value |
+|-----------|-------|
+| Namespace | `rhoai-model-registries` |
+| S3 endpoint | `http://minio.rhoai-model-registries.svc.cluster.local:9000` |
+| Bucket | `bielik-models` |
+| Credentials | `minio` / `minio123` (demo only) |
+| Storage | 50Gi PVC (cluster default StorageClass) |
 
 ---
 
-## llm-d Components
+## Multi-Node Deployment via LeaderWorkerSet
+
+The `spec.worker` field in `LLMInferenceService` signals llm-d to use a **LeaderWorkerSet** instead of a plain Deployment:
+
+```yaml
+spec:
+  replicas: 1          # 1 group of N pods
+  template:            # leader pod (stage 0)
+    containers: [...]
+  worker:              # worker pods (stages 1..N)
+    containers: [...]
+```
+
+With `--pipeline-parallel-size=3`, llm-d creates a 3-pod group:
+- **Leader** (stage 0): receives requests, tokenizes, computes first 1/3 of layers
+- **Worker 1** (stage 1): receives activations from stage 0, processes middle layers
+- **Worker 2** (stage 2): processes final layers, returns output logits
+
+Each pod is scheduled on a different GPU node (anti-affinity is handled by LeaderWorkerSet).
+
+---
+
+## Pipeline vs Tensor Parallelism
+
+**Tensor parallelism** splits individual weight matrices and requires high-bandwidth GPU interconnects (NVLink). It is optimal within a single node.
+
+**Pipeline parallelism** splits the model by layer groups (stages). Communication between stages is activation tensors passed over the network — tolerable on standard Ethernet (AWS ENA 25–100 Gbps).
+
+On **g4dn.2xlarge** nodes (1× T4, no NVLink between nodes), pipeline parallelism is the correct strategy.
+
+---
+
+## Request Flow
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    DataScienceCluster                           │
-│                                                                 │
-│  ┌──────────────────┐  ┌──────────────────┐                    │
-│  │  llm-d Operator  │  │  KServe CRD      │                    │
-│  │  (controller)    │  │  LLMInference-   │                    │
-│  │                  │  │  Service         │                    │
-│  └────────┬─────────┘  └────────┬─────────┘                    │
-│           │ reconciles          │ watches                       │
-│           ▼                     ▼                               │
-│  ┌──────────────────────────────────────────────┐              │
-│  │  llm-d Scheduler + Gateway + Router          │              │
-│  │  (manages pod lifecycle, routing, scaling)   │              │
-│  └──────────────────────────────────────────────┘              │
-└─────────────────────────────────────────────────────────────────┘
+Client → Inference Gateway (Envoy / maas-default-gateway)
+       → LLMInferenceService (llm-d router)
+       → vLLM leader pod (stage 0)
+          → Activations via TCP → worker pod stage 1
+          → Activations via TCP → worker pod stage 2
+          → Sampled token returned to leader
+       → Response streamed to client
 ```
+
+---
+
+## S3 Credentials
+
+The `s3-data-connection` Secret in `bielik-demo` contains the MinIO credentials as standard AWS environment variables. Both the leader (`spec.template`) and worker (`spec.worker`) pods receive these credentials via `envFrom`, so all pods can load the model from MinIO at startup.
 
 ---
 
 ## Network Requirements
 
-For Ray inter-node communication to work, pods must be able to reach each other on arbitrary TCP ports. Verify that no NetworkPolicy blocks pod-to-pod traffic within the `bielik-demo` namespace.
+- All 3 pods must reach each other on arbitrary TCP ports (vLLM pipeline activation exchange)
+- The transfer Job (`bielik-demo` namespace) must reach MinIO (`rhoai-model-registries` namespace) via cross-namespace DNS
+- The transfer Job must reach `https://huggingface.co` for the one-time model download
+- Verify no NetworkPolicy blocks these paths:
 
 ```bash
-# Check for restrictive NetworkPolicies
+# Check intra-bielik-demo pod communication
 oc get networkpolicy -n bielik-demo
 
-# If blocked, allow intra-namespace traffic:
-oc apply -f - <<EOF
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-intra-namespace
-  namespace: bielik-demo
-spec:
-  podSelector: {}
-  ingress:
-  - from:
-    - podSelector: {}
-EOF
+# Check cross-namespace to MinIO
+oc get networkpolicy -n rhoai-model-registries
 ```

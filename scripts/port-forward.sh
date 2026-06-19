@@ -32,14 +32,14 @@ echo -e "${BOLD}═════════════════════�
 echo ""
 
 # --- Znajdź Service stworzony przez llm-d ---
-log_info "Wyszukiwanie Service dla 'bielik-11b-multinode' w namespace '${NAMESPACE}'..."
+log_info "Wyszukiwanie Service dla 'bielik-11b' w namespace '${NAMESPACE}'..."
 
 # llm-d tworzy service z różnymi konwencjami nazw — sprawdź kilka wariantów
 SERVICE_NAME=""
 for LABEL_SELECTOR in \
     "app=bielik-11b" \
-    "llm-d.ai/inferenceservice=bielik-11b-multinode" \
-    "serving.kserve.io/inferenceservice=bielik-11b-multinode"; do
+    "llm-d.ai/inferenceservice=bielik-11b" \
+    "serving.kserve.io/inferenceservice=bielik-11b"; do
 
     FOUND=$(oc get service -n "${NAMESPACE}" \
         -l "${LABEL_SELECTOR}" \

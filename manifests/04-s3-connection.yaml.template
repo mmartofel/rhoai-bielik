@@ -1,0 +1,18 @@
+# =============================================================================
+# S3 data connection — credentials for MinIO in rhoai-model-registries
+# Used by: model transfer Job, LLMInferenceService (model loading from S3)
+# =============================================================================
+apiVersion: v1
+kind: Secret
+metadata:
+  name: s3-data-connection
+  namespace: ${NAMESPACE}
+  labels:
+    app: bielik-11b
+type: Opaque
+stringData:
+  AWS_ACCESS_KEY_ID: "${MINIO_ACCESS_KEY}"
+  AWS_SECRET_ACCESS_KEY: "${MINIO_SECRET_KEY}"
+  AWS_S3_ENDPOINT: "${MINIO_ENDPOINT}"
+  AWS_DEFAULT_REGION: "us-east-1"
+  AWS_S3_BUCKET: "${MINIO_BUCKET}"
