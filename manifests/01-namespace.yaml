@@ -10,4 +10,4 @@ metadata:
   annotations:
     # Opis namespace widoczny w konsoli
     openshift.io/description: "Demo deployment modelu Bielik-11B-v2.3-Instruct na RHOAI 3.4 z distributed inference (llm-d)"
-    openshift.io/display-name: "Bielik-11B Demo"
+    openshift.io/display-name: "bielik-demo"
