@@ -132,18 +132,42 @@ if ! oc rollout status deployment/minio -n "${MINIO_NAMESPACE}" --timeout=120s; 
 fi
 log_success "MinIO gotowy: ${MINIO_ENDPOINT}"
 
-# Stwórz bucket jeśli nie istnieje (przez tymczasowy pod z mc)
+# Stwórz bucket przez jednorazowy Job (oc run --attach jest zawodny w trybie skryptowym)
 log_info "Tworzenie bucketu '${MINIO_BUCKET}' (idempotentne)..."
-oc run minio-bucket-init-$$ \
-    --namespace="${MINIO_NAMESPACE}" \
-    --image=quay.io/minio/mc:latest \
-    --restart=Never \
-    --rm \
-    --attach \
-    --command -- sh -c \
-    "mc alias set local http://minio:9000 minio minio123 2>/dev/null && mc mb -p local/${MINIO_BUCKET} 2>/dev/null && echo 'Bucket OK'" \
-    2>/dev/null || true
-log_success "Bucket '${MINIO_BUCKET}' gotowy"
+oc delete job minio-bucket-init -n "${MINIO_NAMESPACE}" --ignore-not-found &>/dev/null
+
+cat <<BUCKET_EOF | oc apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-bucket-init
+  namespace: ${MINIO_NAMESPACE}
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: quay.io/minio/mc:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              mc alias set local http://minio:9000 minio minio123 &&
+              mc mb -p local/${MINIO_BUCKET} &&
+              echo "Bucket '${MINIO_BUCKET}' ready"
+BUCKET_EOF
+
+if oc wait --for=condition=complete job/minio-bucket-init \
+    -n "${MINIO_NAMESPACE}" --timeout=90s 2>/dev/null; then
+    log_success "Bucket '${MINIO_BUCKET}' gotowy"
+else
+    log_warn "Bucket init Job nie zakończył się w 90s"
+    oc logs job/minio-bucket-init -n "${MINIO_NAMESPACE}" 2>/dev/null || true
+    log_warn "Kontynuuję — bucket zostanie stworzony przez Job transferu"
+fi
+oc delete job minio-bucket-init -n "${MINIO_NAMESPACE}" --ignore-not-found &>/dev/null || true
 
 # =============================================================================
 # KROK 5: Secrety
