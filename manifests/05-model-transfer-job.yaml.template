@@ -53,6 +53,7 @@ spec:
 
               echo "[1/4] Installing tools (huggingface_hub, awscli)..."
               pip install -q --no-cache-dir "huggingface_hub>=0.21.0" awscli
+              export PATH="/workspace/.local/bin:${PATH}"
 
               echo "[2/4] Creating bucket (idempotent)..."
               aws s3 mb "s3://${AWS_S3_BUCKET}" \
