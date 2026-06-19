@@ -1,0 +1,38 @@
+# =============================================================================
+# KServe Model ServiceAccount + S3 Credentials
+#
+# KServe's storage-initializer init container discovers S3 credentials through
+# the pod's ServiceAccount: if a secret referenced in the SA has
+# serving.kserve.io/s3-* annotations, the KServe admission webhook injects
+# those credentials as env vars into the storage-initializer init container.
+#
+# This allows the storage-initializer to download tokenizer/config files from
+# MinIO without duplicating the init container spec (which is managed by the
+# llm-d preset configs and cannot be user-overridden by name).
+#
+# Referenced in: spec.template.serviceAccountName and spec.worker.serviceAccountName
+# in 06-llminferenceservice.yaml
+# =============================================================================
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: s3-creds-kserve
+  namespace: ${NAMESPACE}
+  annotations:
+    serving.kserve.io/s3-endpoint: "${MINIO_ENDPOINT}"
+    serving.kserve.io/s3-usehttps: "0"
+    serving.kserve.io/s3-region: "us-east-1"
+    serving.kserve.io/s3-useanoncredential: "false"
+type: Opaque
+stringData:
+  AWS_ACCESS_KEY_ID: "${MINIO_ACCESS_KEY}"
+  AWS_SECRET_ACCESS_KEY: "${MINIO_SECRET_KEY}"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bielik-model-sa
+  namespace: ${NAMESPACE}
+secrets:
+  - name: s3-creds-kserve

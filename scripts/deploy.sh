@@ -56,7 +56,7 @@ die() {
 echo ""
 echo -e "${BOLD}╔══════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${BOLD}║   Deployment Bielik-11B-v2.3-Instruct na RHOAI 3.4          ║${NC}"
-echo -e "${BOLD}║   Multi-node pipeline parallelism (${PIPELINE_PARALLEL_SIZE}× T4) via llm-d    ║${NC}"
+echo -e "${BOLD}║   Multi-node data parallelism (${PIPELINE_PARALLEL_SIZE}× T4) via llm-d        ║${NC}"
 echo -e "${BOLD}║   Model storage: MinIO (cluster-local S3)                    ║${NC}"
 echo -e "${BOLD}╚══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
@@ -186,6 +186,10 @@ envsubst '${NAMESPACE} ${MINIO_ACCESS_KEY} ${MINIO_SECRET_KEY} ${MINIO_ENDPOINT}
     < "${REPO_DIR}/manifests/04-s3-connection.yaml.template" | oc apply -f -
 log_success "Secret 's3-data-connection' zastosowany"
 
+envsubst '${NAMESPACE} ${MINIO_ACCESS_KEY} ${MINIO_SECRET_KEY} ${MINIO_ENDPOINT}' \
+    < "${REPO_DIR}/manifests/07-kserve-model-sa.yaml.template" | oc apply -f -
+log_success "KServe SA 'bielik-model-sa' i secret 's3-creds-kserve' zastosowane"
+
 # =============================================================================
 # KROK 6: AcceleratorProfile (gpu-profile)
 # =============================================================================
@@ -254,6 +258,9 @@ fi
 # =============================================================================
 log_step "Krok 8/8: Tworzenie LLMInferenceService 'bielik-11b'"
 
+# The built-in data-parallel preset (v3-4-0-kserve-config-llm-worker-data-parallel)
+# in redhat-ods-applications is used automatically by the llm-d operator when
+# spec.parallelism.data is set — no custom config needed.
 oc apply -f "${REPO_DIR}/manifests/06-llminferenceservice.yaml"
 log_success "LLMInferenceService zaaplikowany"
 

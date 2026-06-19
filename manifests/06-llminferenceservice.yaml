@@ -11,13 +11,13 @@ metadata:
     opendatahub.io/hardware-profile-namespace: redhat-ods-applications
     opendatahub.io/model-type: generative
     security.opendatahub.io/enable-auth: "false"
-    openshift.io/display-name: "Bielik-11B-v2.3-Instruct (GPTQ)"
-    openshift.io/description: "Polski model językowy SpeakLeash, 11B parametrów, GPTQ 4-bit, pipeline-parallel 3× T4 via llm-d LeaderWorkerSet"
+    openshift.io/display-name: "Bielik-11B-v2.3-Instruct (data-parallel, 3× T4)"
+    openshift.io/description: "Polski model językowy SpeakLeash, 11B parametrów — inference na 3 węzłach GPU via llm-d data parallelism (RHOAI 3.4 built-in)"
 spec:
   replicas: 1
+  parallelism:
+    data: 3
   model:
-    # Model loaded from cluster-local MinIO — no HuggingFace download at serve time.
-    # Run 05-model-transfer-job first to populate this path.
     uri: "s3://bielik-models/Bielik-11B-v2.3-Instruct-GPTQ/"
     name: "bielik-11b"
   router:
@@ -27,21 +27,23 @@ spec:
           namespace: openshift-ingress
     route: {}
     scheduler: {}
-  # spec.template  = leader pod (pipeline stage 0, Node A)
-  # spec.worker    = worker pods (pipeline stages 1..N, Nodes B, C)
-  # Presence of spec.worker triggers LeaderWorkerSet multi-node deployment.
-  # --pipeline-parallel-size=3 tells vLLM to coordinate 3 pipeline stages.
+  # spec.parallelism.data: 3 → llm-d uses the built-in preset
+  #   "v3-4-0-kserve-config-llm-worker-data-parallel" (redhat-ods-applications)
+  # Creates a LeaderWorkerSet: 1 leader + 2 worker pods, each on a separate GPU node.
+  # Leader (LWS rank 0): loads full model, serves HTTP API, distributes requests.
+  # Workers (LWS rank 1,2): load full model, run --headless, receive tasks from leader.
+  # Inter-node coordination: ZMQ RPC on port 5555 (--data-parallel-address/rpc-port).
   template:
+    serviceAccountName: bielik-model-sa
     containers:
       - name: main
         args:
-          - "--quantization=gptq"
+          - "--quantization=gptq_marlin"
           - "--dtype=float16"
           - "--max-model-len=4096"
           - "--gpu-memory-utilization=0.85"
           - "--trust-remote-code"
           - "--enforce-eager"
-          - "--pipeline-parallel-size=3"
         envFrom:
           - secretRef:
               name: s3-data-connection
@@ -55,8 +57,16 @@ spec:
             memory: "24Gi"
             nvidia.com/gpu: "1"
   worker:
+    serviceAccountName: bielik-model-sa
     containers:
       - name: main
+        args:
+          - "--quantization=gptq_marlin"
+          - "--dtype=float16"
+          - "--max-model-len=4096"
+          - "--gpu-memory-utilization=0.85"
+          - "--trust-remote-code"
+          - "--enforce-eager"
         envFrom:
           - secretRef:
               name: s3-data-connection
