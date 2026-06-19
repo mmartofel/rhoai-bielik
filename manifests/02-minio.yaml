@@ -119,3 +119,22 @@ spec:
     - name: console
       port: 9001
       targetPort: 9001
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: minio-console
+  namespace: rhoai-model-registries
+  labels:
+    app: minio
+  annotations:
+    openshift.io/display-name: "MinIO Console"
+spec:
+  to:
+    kind: Service
+    name: minio
+  port:
+    targetPort: console
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
