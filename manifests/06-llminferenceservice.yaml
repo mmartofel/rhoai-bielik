@@ -17,6 +17,7 @@ spec:
   replicas: 1
   parallelism:
     data: 3
+    dataLocal: 1
   model:
     uri: "s3://bielik-models/Bielik-11B-v2.3-Instruct-GPTQ/"
     name: "bielik-11b"
