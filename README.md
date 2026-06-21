@@ -77,22 +77,24 @@ rhoai-bielik/
 │   ├── 04-test-inference.sh              # Testy inference po deploymencie
 │   ├── 05-accelerator-profile.yaml       # AcceleratorProfile: NVIDIA T4
 │   ├── 05-model-transfer-job.yaml.template  # Job: HuggingFace → MinIO (jednorazowo)
-│   └── 06-llminferenceservice.yaml       # LLMInferenceService (spec.worker → multi-node)
+│   ├── 06-llminferenceservice.yaml       # LLMInferenceService (spec.parallelism.data: 3)
+│   ├── 07-kserve-model-sa.yaml.template  # KServe ServiceAccount + annotowany S3 secret
+│   └── 08-pipeline-parallel-config.yaml  # [ZACHOWANY] Custom PP preset — zablokowany bugiem vLLM 0.18.0
 ├── scripts/
 │   ├── deploy.sh                         # Pełny deployment (MinIO → transfer → LLIS → wait)
 │   ├── undeploy.sh                       # Usunięcie zasobów
 │   ├── status.sh                         # Status deploymentu
 │   └── port-forward.sh                   # Lokalny dostęp przez port-forward
 └── docs/
-    ├── architecture.md                   # Architektura: MinIO, LeaderWorkerSet, pipeline parallel
+    ├── architecture.md                   # Architektura: MinIO, LeaderWorkerSet, data parallelism + historia PP
     └── troubleshooting.md                # Rozwiązywanie typowych problemów
 ```
 
 ---
 
-## Jak to działa — Pipeline Parallelism
+## Jak to działa — Data Parallelism
 
-Model Bielik-11B jest za duży, aby zmieścić się na jednej karcie T4 (16GB VRAM) bez kwantyzacji lub podziału. Używamy **pipeline parallelism**: model jest podzielony na 3 grupy warstw (stages), każda działająca na osobnym nodzie GPU.
+Wersja GPTQ (4-bit) modelu Bielik-11B zajmuje ~5,75 GiB VRAM — mieści się na jednej karcie T4 (16 GiB). Zamiast dzielić model między węzły, uruchamiamy **3 niezależne kopie** (data parallelism): każdy węzeł ładuje pełny model i obsługuje osobną porcję zapytań.
 
 ```
 Request HTTP
@@ -101,22 +103,18 @@ Request HTTP
 [llm-d Gateway]
      │
      ▼
-[Node A — T4] → Stage 0 (warstwy 0–12)
-     │ aktywacje (TCP)
-     ▼
-[Node B — T4] → Stage 1 (warstwy 13–24)
-     │ aktywacje (TCP)
-     ▼
-[Node C — T4] → Stage 2 (warstwy 25–40 + głowa LM)
-     │ tokeny
-     ▼
-Response JSON
+[Node A — T4] ← leader (DP rank 0): pełny model + HTTP API :8000
+     │               DP Coordinator (ZMQ :5555) rozdziela zapytania
+     ├──────────────────────────────────────┐
+     ▼                                      ▼
+[Node B — T4] ← worker (DP rank 1)   [Node C — T4] ← worker (DP rank 2)
+  pełny model, --headless               pełny model, --headless
 ```
 
-**Dlaczego pipeline, nie tensor parallelism?**
-Tensor parallelism wymaga szybkich połączeń NVLink między GPU. Instancje g4dn.2xlarge mają po jednej T4 i nie są połączone NVLinkiemm — pipeline parallelism przez standardową sieć TCP (AWS ENA) jest właściwym wyborem dla tej topologii.
+Każde zapytanie jest obsługiwane przez jeden węzeł — brak wymiany aktywacji między węzłami. Dzięki temu przepustowość rośnie 3× liniowo wraz z liczbą węzłów.
 
-Szczegóły: [docs/architecture.md](docs/architecture.md)
+**Dlaczego nie pipeline parallelism?**
+Pipeline parallelism (`spec.parallelism.pipeline: 3`) był pierwotnym założeniem, ale jest zablokowany bugiem w RHAI vLLM 0.18.0 (`AssertionError: collective_rpc should not be called on follower node`). Szczegóły techniczne i zachowany preset PP: [docs/architecture.md](docs/architecture.md), `manifests/08-pipeline-parallel-config.yaml`.
 
 ---
 
@@ -173,7 +171,7 @@ Najczęstsze problemy:
 - **Pod `Pending`** → sprawdź nody GPU i resource quotas
 - **Job transferu nie kończy się** → sprawdź dostęp do HuggingFace i MinIO (`oc logs job/bielik-model-transfer -n bielik-demo`)
 - **MinIO niedostępny** → sprawdź pody w `rhoai-model-registries` namespace
-- **Ray nie startuje** → sprawdź NetworkPolicy między podami
+- **Workers nie łączą się z DP Coordinator** → sprawdź port 5555 między podami (`oc exec ... -- nc -zv <leader-ip> 5555`)
 - **OOM na T4** → zmniejsz `MAX_MODEL_LEN` lub `GPU_MEMORY_UTILIZATION`
 
 ---
