@@ -7,6 +7,8 @@ metadata:
     opendatahub.io/dashboard: "true"
     # Standardowe etykiety OpenShift
     kubernetes.io/metadata.name: bielik-demo
+    # Wyłącza ModelMesh — namespace używa KServe/llm-d (single-model serving)
+    modelmesh-enabled: "false"
   annotations:
     # Opis namespace widoczny w konsoli
     openshift.io/description: "Demo deployment modelu Bielik-11B-v2.3-Instruct na RHOAI 3.4 z distributed inference (llm-d)"

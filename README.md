@@ -144,6 +144,10 @@ Pipeline parallelism (`spec.parallelism.pipeline: 3`) był pierwotnym założeni
 Po deploymencie model eksponuje **OpenAI-compatible API**:
 
 ```bash
+# Pobierz URL endpointu
+export ENDPOINT_URL=$(oc get llminferenceservice bielik-11b -n bielik-demo -o jsonpath='{.status.url}')
+echo "Endpoint: ${ENDPOINT_URL}"
+
 # Lista załadowanych modeli
 curl ${ENDPOINT_URL}/v1/models
 
@@ -183,4 +187,3 @@ Najczęstsze problemy:
 - [Red Hat OpenShift AI dokumentacja](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/)
 - [llm-d — projekt distributed inference](https://github.com/llm-d/llm-d)
 - [vLLM distributed inference](https://docs.vllm.ai/en/latest/serving/distributed_serving.html)
-# rhoai-bielik
