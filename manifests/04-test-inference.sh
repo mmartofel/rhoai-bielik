@@ -184,7 +184,7 @@ echo -e "${GREEN}${BOLD}  ✅ Testy inference zakończone                       
 echo -e "${BOLD}══════════════════════════════════════════════════════════════${NC}"
 echo ""
 echo "Aby kontynuować testowanie, możesz użyć:"
-echo "  curl ${ENDPOINT_URL}/v1/chat/completions \\"
+echo "  curl -k ${ENDPOINT_URL}/v1/chat/completions \\"
 echo "    -H 'Content-Type: application/json' \\"
 echo "    -d '{\"model\":\"${MODEL_NAME}\",\"messages\":[{\"role\":\"user\",\"content\":\"Twoje pytanie\"}]}'"
 echo ""

@@ -53,13 +53,22 @@ else
     log_warn "LLMInferenceService 'bielik-11b' nie istnieje — pomijam"
 fi
 
-# --- Usunięcie Secret ---
-log_info "Usuwanie Secret 'hf-token'..."
-if oc get secret hf-token -n "${NAMESPACE}" &>/dev/null; then
-    oc delete secret hf-token -n "${NAMESPACE}"
-    log_success "Secret 'hf-token' usunięty"
+# --- Usunięcie Playground (LlamaStackDistribution) ---
+log_info "Usuwanie Playground 'lsd-genai-playground'..."
+if oc get llamastackdistribution lsd-genai-playground -n "${NAMESPACE}" &>/dev/null 2>&1; then
+    oc delete llamastackdistribution lsd-genai-playground -n "${NAMESPACE}"
+    log_success "Playground 'lsd-genai-playground' usunięty"
 else
-    log_warn "Secret 'hf-token' nie istnieje — pomijam"
+    log_warn "Playground 'lsd-genai-playground' nie istnieje — pomijam"
+fi
+
+# --- Usunięcie Secret ---
+log_info "Usuwanie Secret 'huggingface-token'..."
+if oc get secret huggingface-token -n "${NAMESPACE}" &>/dev/null; then
+    oc delete secret huggingface-token -n "${NAMESPACE}"
+    log_success "Secret 'huggingface-token' usunięty"
+else
+    log_warn "Secret 'huggingface-token' nie istnieje — pomijam"
 fi
 
 # --- Opcjonalne usunięcie namespace ---

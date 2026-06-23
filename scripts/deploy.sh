@@ -256,7 +256,7 @@ fi
 # =============================================================================
 # KROK 8: LLMInferenceService
 # =============================================================================
-log_step "Krok 8/8: Tworzenie LLMInferenceService 'bielik-11b'"
+log_step "Krok 8/9: Tworzenie LLMInferenceService 'bielik-11b'"
 
 # The built-in data-parallel preset (v3-4-0-kserve-config-llm-worker-data-parallel)
 # in redhat-ods-applications is used automatically by the llm-d operator when
@@ -320,6 +320,15 @@ while true; do
     sleep "${POLL_INTERVAL_SECONDS}"
 done
 
+# =============================================================================
+# KROK 9: Playground (llama-stack)
+# =============================================================================
+log_step "Krok 9/9: Wdrożenie Playground (LlamaStackDistribution)"
+
+oc apply -f "${REPO_DIR}/manifests/09-playground.yaml"
+log_success "Playground 'lsd-genai-playground' zaaplikowany"
+log_info "Playground dostępny w RHOAI: Gen AI studio → Playground"
+
 ENDPOINT_URL=$(oc get llminferenceservice bielik-11b \
     -n "${NAMESPACE}" \
     -o jsonpath='{.status.url}' 2>/dev/null || echo "")
@@ -332,8 +341,8 @@ echo ""
 if [ -n "${ENDPOINT_URL}" ]; then
     echo -e "${GREEN}Endpoint URL:${NC} ${ENDPOINT_URL}"
     echo ""
-    echo "  curl ${ENDPOINT_URL}/v1/models"
-    echo "  curl ${ENDPOINT_URL}/v1/chat/completions \\"
+    echo "  curl -k ${ENDPOINT_URL}/v1/models"
+    echo "  curl -k ${ENDPOINT_URL}/v1/chat/completions \\"
     echo "    -H 'Content-Type: application/json' \\"
     echo "    -d '{\"model\":\"${MODEL_NAME}\",\"messages\":[{\"role\":\"user\",\"content\":\"Cześć!\"}]}'"
 else

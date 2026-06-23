@@ -79,7 +79,8 @@ rhoai-bielik/
 │   ├── 05-model-transfer-job.yaml.template  # Job: HuggingFace → MinIO (jednorazowo)
 │   ├── 06-llminferenceservice.yaml       # LLMInferenceService (spec.parallelism.data: 3)
 │   ├── 07-kserve-model-sa.yaml.template  # KServe ServiceAccount + annotowany S3 secret
-│   └── 08-pipeline-parallel-config.yaml  # [ZACHOWANY] Custom PP preset — zablokowany bugiem vLLM 0.18.0
+│   ├── 08-pipeline-parallel-config.yaml  # [ZACHOWANY] Custom PP preset — zablokowany bugiem vLLM 0.18.0
+│   └── 09-playground.yaml                # LlamaStackDistribution — Playground w RHOAI Gen AI studio
 ├── scripts/
 │   ├── deploy.sh                         # Pełny deployment (MinIO → transfer → LLIS → wait)
 │   ├── undeploy.sh                       # Usunięcie zasobów
