@@ -56,7 +56,7 @@ timed_curl() {
     curl --insecure "$@"
     end=$(date +%s%N)
     elapsed=$(( (end - start) / 1000000 ))
-    echo -e "\n${YELLOW}⏱  Czas odpowiedzi: ${elapsed} ms${NC}"
+    echo -e "\n${YELLOW}⏱  Czas odpowiedzi: ${elapsed} ms${NC}" >&2
 }
 
 echo ""
@@ -76,7 +76,7 @@ MODELS_RESPONSE=$(timed_curl \
     --fail \
     --max-time 30 \
     "${ENDPOINT_URL}/v1/models" \
-    2>&1 || echo '{"error": "request failed"}')
+    || echo '{"error": "request failed"}')
 
 echo "${MODELS_RESPONSE}" | python3 -m json.tool 2>/dev/null || echo "${MODELS_RESPONSE}"
 
@@ -116,7 +116,7 @@ RESPONSE_2=$(timed_curl \
         \"temperature\": 0.7
     }" \
     "${ENDPOINT_URL}/v1/chat/completions" \
-    2>&1 || echo '{"error": "request failed"}')
+    || echo '{"error": "request failed"}')
 
 # Wyodrębnij treść odpowiedzi
 ANSWER_2=$(echo "${RESPONSE_2}" | python3 -c "
@@ -161,7 +161,7 @@ RESPONSE_3=$(timed_curl \
         \"temperature\": 0.7
     }" \
     "${ENDPOINT_URL}/v1/chat/completions" \
-    2>&1 || echo '{"error": "request failed"}')
+    || echo '{"error": "request failed"}')
 
 ANSWER_3=$(echo "${RESPONSE_3}" | python3 -c "
 import json, sys
