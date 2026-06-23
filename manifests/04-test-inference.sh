@@ -53,7 +53,7 @@ log_info "Endpoint: ${ENDPOINT_URL}"
 timed_curl() {
     local start end elapsed
     start=$(date +%s%N)
-    curl "$@"
+    curl --insecure "$@"
     end=$(date +%s%N)
     elapsed=$(( (end - start) / 1000000 ))
     echo -e "\n${YELLOW}⏱  Czas odpowiedzi: ${elapsed} ms${NC}"

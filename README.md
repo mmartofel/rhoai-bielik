@@ -149,10 +149,10 @@ export ENDPOINT_URL=$(oc get llminferenceservice bielik-11b -n bielik-demo -o js
 echo "Endpoint: ${ENDPOINT_URL}"
 
 # Lista załadowanych modeli
-curl ${ENDPOINT_URL}/v1/models
+curl -k ${ENDPOINT_URL}/v1/models
 
 # Pytanie do modelu
-curl ${ENDPOINT_URL}/v1/chat/completions \
+curl -k ${ENDPOINT_URL}/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "bielik-11b",
